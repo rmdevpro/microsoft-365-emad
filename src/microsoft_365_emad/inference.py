@@ -1,6 +1,9 @@
 """
-microsoft_365_emad.inference — LLM resolution from Kaiser AE config.
-Same pattern as Jerry's inference.py.
+microsoft_365_emad.inference — LLM resolution.
+
+Reads LLM config from the host's TE config (/config/te.yml) or
+from config injected via set_config(). Falls back to environment-based
+Gemini endpoint if no config is available.
 """
 
 import hashlib
@@ -14,9 +17,8 @@ from langchain_openai import ChatOpenAI
 
 _log = logging.getLogger("microsoft_365_emad")
 
-_CONFIG_PATH = Path(
-    os.environ.get("KAISER_CONFIG_PATH", "/workspace/kaiser/config/config.yml")
-)
+# Host TE config (mounted in container)
+_TE_CONFIG_PATH = Path("/config/te.yml")
 
 _cache_lock = threading.Lock()
 _llm_cache: dict[str, ChatOpenAI] = {}
@@ -31,9 +33,9 @@ def set_config(config: dict) -> None:
 def _get_config() -> dict:
     if _current_config is not None:
         return _current_config
-    if not _CONFIG_PATH.exists():
-        return {}
-    return yaml.safe_load(_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+    if _TE_CONFIG_PATH.exists():
+        return yaml.safe_load(_TE_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+    return {}
 
 
 def get_llm(role: str = "fast") -> ChatOpenAI:
@@ -43,9 +45,11 @@ def get_llm(role: str = "fast") -> ChatOpenAI:
     if not provider_config:
         provider_config = config.get("imperator", {})
     if not provider_config:
+        # Fall back to Gemini via environment
         provider_config = {
-            "base_url": "http://kaiser:9226/peer/sutherland/v1",
-            "model": "imperator-kaiser",
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+            "model": "gemini-2.5-flash",
+            "api_key_env": "GOOGLE_API_KEY",
         }
 
     base_url = provider_config.get("base_url")
