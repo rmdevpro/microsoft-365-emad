@@ -303,11 +303,12 @@ def _load_system_prompt() -> str:
 
 
 async def init_node(state: NadellaImperatorState) -> dict:
-    """Parse the OpenAI payload and set up the conversation."""
+    """Parse payload, set up conversation. Append-only on resumed turns."""
     import uuid
     from langchain_core.messages import HumanMessage
 
     payload = state.get("payload", {})
+    existing_messages = state.get("messages", [])
 
     conv_id = payload.get("conversation_id")
     if conv_id == "new":
@@ -315,30 +316,24 @@ async def init_node(state: NadellaImperatorState) -> dict:
     elif not conv_id:
         conv_id = f"default-{payload.get('model', 'nadella')}"
 
+    # Extract last user message
     raw_messages = payload.get("messages", [])
-    lc_messages = []
-    for m in raw_messages:
-        role = m.get("role", "user")
-        content = m.get("content", "")
-        if role == "system":
-            lc_messages.append(SystemMessage(content=content))
-        elif role == "assistant":
-            lc_messages.append(AIMessage(content=content))
-        elif role == "tool":
-            lc_messages.append(ToolMessage(content=content, tool_call_id=m.get("tool_call_id", "unknown")))
-        else:
-            lc_messages.append(HumanMessage(content=content))
+    new_user_msg = None
+    for m in reversed(raw_messages):
+        if m.get("role") == "user":
+            new_user_msg = HumanMessage(content=m.get("content", ""))
+            break
+    if not new_user_msg:
+        new_user_msg = HumanMessage(content="")
 
-    has_system = any(isinstance(m, SystemMessage) for m in lc_messages)
-    if not has_system:
-        system_content = _load_system_prompt()
-        lc_messages = [SystemMessage(content=system_content)] + lc_messages
+    # Resumed conversation
+    if existing_messages:
+        return {"messages": [new_user_msg], "conversation_id": conv_id, "iteration_count": 0}
 
-    return {
-        "messages": lc_messages,
-        "conversation_id": conv_id,
-        "iteration_count": 0,
-    }
+    # First turn
+    system_content = _load_system_prompt()
+    messages = [SystemMessage(content=system_content), new_user_msg]
+    return {"messages": messages, "conversation_id": conv_id, "iteration_count": 0}
 
 
 async def agent_node(state: NadellaImperatorState) -> dict:
