@@ -8,7 +8,7 @@ from pathlib import Path
 
 import httpx
 
-from microsoft_365_emad import nadella_api_calls_total, nadella_api_errors_total
+from microsoft_365_emad import m365_api_calls_total, m365_api_errors_total
 from microsoft_365_emad.o365_client import graph_delete, graph_get, graph_post
 
 _log = logging.getLogger("microsoft_365_emad")
@@ -46,10 +46,10 @@ async def list_files(path: str = "/", limit: int = 50) -> str:
 
     try:
         result = await asyncio.to_thread(_sync)
-        nadella_api_calls_total.labels(service="onedrive", operation="list").inc()
+        m365_api_calls_total.labels(service="onedrive", operation="list").inc()
         return result
     except (httpx.HTTPError, RuntimeError, OSError) as exc:
-        nadella_api_errors_total.labels(
+        m365_api_errors_total.labels(
             service="onedrive", error_type=type(exc).__name__
         ).inc()
         return f"Error listing files: {exc}"
@@ -92,10 +92,10 @@ async def upload_file(local_path: str, remote_path: str) -> str:
 
     try:
         result = await asyncio.to_thread(_sync)
-        nadella_api_calls_total.labels(service="onedrive", operation="upload").inc()
+        m365_api_calls_total.labels(service="onedrive", operation="upload").inc()
         return result
     except (httpx.HTTPError, RuntimeError, OSError) as exc:
-        nadella_api_errors_total.labels(
+        m365_api_errors_total.labels(
             service="onedrive", error_type=type(exc).__name__
         ).inc()
         return f"Error uploading file: {exc}"
@@ -123,10 +123,10 @@ async def search_files(query: str, limit: int = 20) -> str:
 
     try:
         result = await asyncio.to_thread(_sync)
-        nadella_api_calls_total.labels(service="onedrive", operation="search").inc()
+        m365_api_calls_total.labels(service="onedrive", operation="search").inc()
         return result
     except (httpx.HTTPError, RuntimeError, OSError) as exc:
-        nadella_api_errors_total.labels(
+        m365_api_errors_total.labels(
             service="onedrive", error_type=type(exc).__name__
         ).inc()
         return f"Error searching files: {exc}"
@@ -153,12 +153,12 @@ async def create_folder(name: str, path: str = "/") -> str:
 
     try:
         result = await asyncio.to_thread(_sync)
-        nadella_api_calls_total.labels(
+        m365_api_calls_total.labels(
             service="onedrive", operation="create_folder"
         ).inc()
         return result
     except (httpx.HTTPError, RuntimeError, OSError) as exc:
-        nadella_api_errors_total.labels(
+        m365_api_errors_total.labels(
             service="onedrive", error_type=type(exc).__name__
         ).inc()
         return f"Error creating folder: {exc}"
@@ -176,10 +176,10 @@ async def delete_item(item_path: str) -> str:
 
     try:
         result = await asyncio.to_thread(_sync)
-        nadella_api_calls_total.labels(service="onedrive", operation="delete").inc()
+        m365_api_calls_total.labels(service="onedrive", operation="delete").inc()
         return result
     except (httpx.HTTPError, RuntimeError, OSError) as exc:
-        nadella_api_errors_total.labels(
+        m365_api_errors_total.labels(
             service="onedrive", error_type=type(exc).__name__
         ).inc()
         return f"Error deleting item: {exc}"

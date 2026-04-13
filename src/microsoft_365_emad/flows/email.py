@@ -11,7 +11,7 @@ from pathlib import Path
 
 import httpx
 
-from microsoft_365_emad import nadella_api_calls_total, nadella_api_errors_total
+from microsoft_365_emad import m365_api_calls_total, m365_api_errors_total
 from microsoft_365_emad.o365_client import graph_get, graph_patch, graph_post
 
 _log = logging.getLogger("microsoft_365_emad")
@@ -62,10 +62,10 @@ async def read_messages(
 
     try:
         result = await asyncio.to_thread(_sync)
-        nadella_api_calls_total.labels(service="email", operation="read").inc()
+        m365_api_calls_total.labels(service="email", operation="read").inc()
         return result
     except (httpx.HTTPError, RuntimeError, OSError) as exc:
-        nadella_api_errors_total.labels(
+        m365_api_errors_total.labels(
             service="email", error_type=type(exc).__name__
         ).inc()
         return f"Error reading messages: {exc}"
@@ -112,10 +112,10 @@ async def send_message(
 
     try:
         result = await asyncio.to_thread(_sync)
-        nadella_api_calls_total.labels(service="email", operation="send").inc()
+        m365_api_calls_total.labels(service="email", operation="send").inc()
         return result
     except (httpx.HTTPError, RuntimeError, OSError) as exc:
-        nadella_api_errors_total.labels(
+        m365_api_errors_total.labels(
             service="email", error_type=type(exc).__name__
         ).inc()
         return f"Error sending email: {exc}"
@@ -146,10 +146,10 @@ async def search_messages(query_text: str, limit: int = 10) -> str:
 
     try:
         result = await asyncio.to_thread(_sync)
-        nadella_api_calls_total.labels(service="email", operation="search").inc()
+        m365_api_calls_total.labels(service="email", operation="search").inc()
         return result
     except (httpx.HTTPError, RuntimeError, OSError) as exc:
-        nadella_api_errors_total.labels(
+        m365_api_errors_total.labels(
             service="email", error_type=type(exc).__name__
         ).inc()
         return f"Error searching messages: {exc}"
@@ -179,10 +179,10 @@ async def mark_as_read(message_subject: str) -> str:
 
     try:
         result = await asyncio.to_thread(_sync)
-        nadella_api_calls_total.labels(service="email", operation="mark_read").inc()
+        m365_api_calls_total.labels(service="email", operation="mark_read").inc()
         return result
     except (httpx.HTTPError, RuntimeError, OSError) as exc:
-        nadella_api_errors_total.labels(
+        m365_api_errors_total.labels(
             service="email", error_type=type(exc).__name__
         ).inc()
         return f"Error marking messages as read: {exc}"
@@ -206,10 +206,10 @@ async def list_folders() -> str:
 
     try:
         result = await asyncio.to_thread(_sync)
-        nadella_api_calls_total.labels(service="email", operation="list_folders").inc()
+        m365_api_calls_total.labels(service="email", operation="list_folders").inc()
         return result
     except (httpx.HTTPError, RuntimeError, OSError) as exc:
-        nadella_api_errors_total.labels(
+        m365_api_errors_total.labels(
             service="email", error_type=type(exc).__name__
         ).inc()
         return f"Error listing folders: {exc}"

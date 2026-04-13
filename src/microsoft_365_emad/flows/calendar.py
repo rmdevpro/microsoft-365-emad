@@ -7,7 +7,7 @@ import logging
 
 import httpx
 
-from microsoft_365_emad import nadella_api_calls_total, nadella_api_errors_total
+from microsoft_365_emad import m365_api_calls_total, m365_api_errors_total
 from microsoft_365_emad.o365_client import graph_delete, graph_get, graph_post
 
 _log = logging.getLogger("microsoft_365_emad")
@@ -47,10 +47,10 @@ async def list_events(days_ahead: int = 7, limit: int = 20) -> str:
 
     try:
         result = await asyncio.to_thread(_sync)
-        nadella_api_calls_total.labels(service="calendar", operation="list").inc()
+        m365_api_calls_total.labels(service="calendar", operation="list").inc()
         return result
     except (httpx.HTTPError, RuntimeError, OSError) as exc:
-        nadella_api_errors_total.labels(
+        m365_api_errors_total.labels(
             service="calendar", error_type=type(exc).__name__
         ).inc()
         return f"Error listing events: {exc}"
@@ -89,10 +89,10 @@ async def create_event(
 
     try:
         result = await asyncio.to_thread(_sync)
-        nadella_api_calls_total.labels(service="calendar", operation="create").inc()
+        m365_api_calls_total.labels(service="calendar", operation="create").inc()
         return result
     except (httpx.HTTPError, RuntimeError, OSError) as exc:
-        nadella_api_errors_total.labels(
+        m365_api_errors_total.labels(
             service="calendar", error_type=type(exc).__name__
         ).inc()
         return f"Error creating event: {exc}"
@@ -120,10 +120,10 @@ async def delete_event(event_subject: str) -> str:
 
     try:
         result = await asyncio.to_thread(_sync)
-        nadella_api_calls_total.labels(service="calendar", operation="delete").inc()
+        m365_api_calls_total.labels(service="calendar", operation="delete").inc()
         return result
     except (httpx.HTTPError, RuntimeError, OSError) as exc:
-        nadella_api_errors_total.labels(
+        m365_api_errors_total.labels(
             service="calendar", error_type=type(exc).__name__
         ).inc()
         return f"Error deleting event: {exc}"
