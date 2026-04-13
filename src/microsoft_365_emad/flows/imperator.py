@@ -1,17 +1,23 @@
 """
 microsoft_365_emad.flows.imperator — Nadella Imperator StateGraph.
 
-CB-style ReAct agent for Microsoft 365 service brokering.
+Outer graph: resolves conversation_id, invokes inner ReAct subgraph
+Inner graph: ReAct loop with O365 tools, checkpointed via PostgresSaver
+
+Conversation state persisted via PostgresSaver on the inner subgraph.
+The outer graph resolves the thread_id BEFORE invoking the subgraph.
+
 Uses MSAL public client + Graph API. No app registration needed.
 """
 
 import logging
+import uuid
 from pathlib import Path
-from typing import Annotated, TypedDict
+from typing import Annotated, Optional, TypedDict
 
 import httpx
 import openai
-from langchain_core.messages import AIMessage, AnyMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
@@ -25,13 +31,23 @@ _PROMPT_PATH = (
 _MAX_ITERATIONS = 15
 
 
-class NadellaImperatorState(TypedDict):
-    payload: dict  # Full OpenAI request body
+# ── Inner ReAct graph state ─────────────────────────────────────────────
+
+
+class ReactState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
-    conversation_id: str | None
-    response_text: str | None
-    error: str | None
+    response_text: Optional[str]
+    error: Optional[str]
     iteration_count: int
+
+
+# ── Outer graph state ───────────────────────────────────────────────────
+
+
+class OuterState(TypedDict):
+    payload: dict
+    response_text: Optional[str]
+    conversation_id: Optional[str]
 
 
 # ── Tools ────────────────────────────────────────────────────────────────
@@ -299,44 +315,10 @@ def _load_system_prompt() -> str:
     return "You are Nadella, the Microsoft 365 service broker."
 
 
-# ── Graph nodes ──────────────────────────────────────────────────────────
+# ── Inner ReAct graph nodes ──────────────────────────────────────────────
 
 
-async def init_node(state: NadellaImperatorState) -> dict:
-    """Parse payload, set up conversation. Append-only on resumed turns."""
-    import uuid
-    from langchain_core.messages import HumanMessage
-
-    payload = state.get("payload", {})
-    existing_messages = state.get("messages", [])
-
-    conv_id = payload.get("conversation_id")
-    if conv_id == "new":
-        conv_id = str(uuid.uuid4())
-    elif not conv_id:
-        conv_id = f"default-{payload.get('model', 'nadella')}"
-
-    # Extract last user message
-    raw_messages = payload.get("messages", [])
-    new_user_msg = None
-    for m in reversed(raw_messages):
-        if m.get("role") == "user":
-            new_user_msg = HumanMessage(content=m.get("content", ""))
-            break
-    if not new_user_msg:
-        new_user_msg = HumanMessage(content="")
-
-    # Resumed conversation
-    if existing_messages:
-        return {"messages": [new_user_msg], "conversation_id": conv_id, "iteration_count": 0}
-
-    # First turn
-    system_content = _load_system_prompt()
-    messages = [SystemMessage(content=system_content), new_user_msg]
-    return {"messages": messages, "conversation_id": conv_id, "iteration_count": 0}
-
-
-async def agent_node(state: NadellaImperatorState) -> dict:
+async def agent_node(state: ReactState) -> dict:
     from microsoft_365_emad.inference import get_llm
 
     llm = get_llm("fast")
@@ -370,59 +352,127 @@ async def agent_node(state: NadellaImperatorState) -> dict:
     }
 
 
-def should_continue(state: NadellaImperatorState) -> str:
+def should_continue(state: ReactState) -> str:
     if state.get("error"):
         return "finalize"
-    messages = state["messages"]
+    messages = state.get("messages", [])
     if not messages:
         return "finalize"
     last = messages[-1]
     if isinstance(last, AIMessage) and last.tool_calls:
         if state.get("iteration_count", 0) >= _MAX_ITERATIONS:
-            return "finalize"
+            return "max_iterations_fallback"
         return "tool_node"
     return "finalize"
 
 
-def finalize(state: NadellaImperatorState) -> dict:
-    for msg in reversed(state["messages"]):
+async def max_iterations_fallback(state: ReactState) -> dict:
+    return {
+        "messages": [AIMessage(content=(
+            "I was unable to complete that request within the allowed "
+            "number of steps. Please try again."
+        ))],
+    }
+
+
+def finalize(state: ReactState) -> dict:
+    for msg in reversed(state.get("messages", [])):
         if (
             isinstance(msg, AIMessage)
             and msg.content
             and not getattr(msg, "tool_calls", None)
         ):
-            return {
-                "response_text": str(msg.content),
-                "conversation_id": state.get("conversation_id"),
-            }
-    return {
-        "response_text": "[No response generated]",
-        "conversation_id": state.get("conversation_id"),
-    }
+            return {"response_text": str(msg.content)}
+    return {"response_text": "[No response generated]"}
 
 
 # ── Graph builder ────────────────────────────────────────────────────────
 
 
-def build_imperator_graph(params: dict | None = None) -> StateGraph:
-    tool_node_instance = ToolNode(_TOOLS)
+def build_imperator_graph(params: dict | None = None):
+    """Build the Imperator as an outer graph wrapping a checkpointed ReAct subgraph.
 
-    workflow = StateGraph(NadellaImperatorState)
-    workflow.add_node("init_node", init_node)
-    workflow.add_node("agent_node", agent_node)
-    workflow.add_node("tool_node", tool_node_instance)
-    workflow.add_node("finalize", finalize)
-
-    workflow.set_entry_point("init_node")
-    workflow.add_edge("init_node", "agent_node")
-    workflow.add_conditional_edges(
-        "agent_node",
-        should_continue,
-        {"tool_node": "tool_node", "finalize": "finalize"},
-    )
-    workflow.add_edge("tool_node", "agent_node")
-    workflow.add_edge("finalize", END)
-
+    Outer graph: resolves conversation_id, parses payload, invokes subgraph
+    Inner graph: ReAct loop with tools, checkpointed via PostgresSaver
+    """
     from app.checkpointer import get_checkpointer
 
-    return workflow.compile(checkpointer=get_checkpointer())
+    # ── Inner ReAct graph ───────────────────────────────────────────
+    tool_node_instance = ToolNode(_TOOLS)
+
+    inner = StateGraph(ReactState)
+    inner.add_node("agent_node", agent_node)
+    inner.add_node("tool_node", tool_node_instance)
+    inner.add_node("finalize", finalize)
+    inner.add_node("max_iterations_fallback", max_iterations_fallback)
+
+    inner.set_entry_point("agent_node")
+    inner.add_conditional_edges(
+        "agent_node",
+        should_continue,
+        {
+            "tool_node": "tool_node",
+            "max_iterations_fallback": "max_iterations_fallback",
+            "finalize": "finalize",
+        },
+    )
+    inner.add_edge("tool_node", "agent_node")
+    inner.add_edge("max_iterations_fallback", "finalize")
+    inner.add_edge("finalize", END)
+
+    cp = get_checkpointer()
+    _log.info("Compiling inner ReAct graph with checkpointer: %s", type(cp).__name__)
+    compiled_inner = inner.compile(checkpointer=cp)
+
+    # ── Outer graph ─────────────────────────────────────────────────
+    async def resolve_and_invoke(state: OuterState) -> dict:
+        """Parse payload, resolve thread_id, invoke inner subgraph."""
+        payload = state.get("payload", {})
+
+        # Resolve conversation_id -> thread_id
+        conv_id = payload.get("conversation_id", "")
+        if conv_id == "new":
+            conv_id = str(uuid.uuid4())
+            _log.info("New conversation thread: %s", conv_id)
+        elif not conv_id:
+            conv_id = f"default-{payload.get('model', 'nadella')}"
+
+        # Load system prompt
+        system_prompt = _load_system_prompt()
+
+        # Extract last user message from payload
+        raw_messages = payload.get("messages", [])
+        new_user_msg = None
+        for m in reversed(raw_messages):
+            if m.get("role") == "user":
+                new_user_msg = HumanMessage(content=m.get("content", ""))
+                break
+        if not new_user_msg:
+            new_user_msg = HumanMessage(content="")
+
+        # Invoke inner subgraph with thread_id config
+        inner_config = {"configurable": {"thread_id": conv_id}}
+
+        # Check if this is a resumed conversation
+        checkpoint = await cp.aget_tuple(inner_config)
+        if checkpoint and checkpoint.checkpoint.get("channel_values", {}).get("messages"):
+            # Resumed -- just send new user message
+            inner_input = {"messages": [new_user_msg]}
+        else:
+            # New thread -- send system prompt + user message
+            inner_input = {"messages": [SystemMessage(content=system_prompt), new_user_msg]}
+
+        result = await compiled_inner.ainvoke(inner_input, config=inner_config)
+
+        return {
+            "response_text": result.get("response_text", ""),
+            "conversation_id": conv_id,
+        }
+
+    outer = StateGraph(OuterState)
+    outer.add_node("resolve_and_invoke", resolve_and_invoke)
+    outer.set_entry_point("resolve_and_invoke")
+    outer.add_edge("resolve_and_invoke", END)
+
+    # Outer graph has NO checkpointer -- it's stateless
+    return outer.compile()
