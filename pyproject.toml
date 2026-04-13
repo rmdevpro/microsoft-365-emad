@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "microsoft-365-emad"
-version = "0.1.1"
+version = "0.1.2"
 description = "Microsoft 365 Service Broker eMAD — email, calendar, OneDrive via Graph API"
 requires-python = ">=3.12"
 dependencies = [

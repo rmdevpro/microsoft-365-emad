@@ -26,3 +26,5 @@ m365_token_refresh_failures_total = Counter(
     "Failed token refreshes",
     ["account"],
 )
+
+from microsoft_365_emad.register import build_graph  # noqa: E402, F401
